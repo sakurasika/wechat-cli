@@ -43,8 +43,10 @@ def cli(ctx, config_path):
       wechat-cli contacts --query "李"              # 搜索联系人
       wechat-cli new-messages                       # 获取增量新消息
     """
-    # init/version 命令不需要 AppContext
+    # init/version 不需要 AppContext。子命令 --help 也不该先要求已经 init。
     if ctx.invoked_subcommand in ("init", "version"):
+        return
+    if "--help" in sys.argv[1:]:
         return
 
     try:

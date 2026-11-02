@@ -309,7 +309,9 @@ Open the output with DB Browser for SQLite / `sqlite3`. Keys come from `~/.wecha
 ### `unread` — Unread Sessions
 
 ```bash
-wechat-cli unread                          # All unread sessions
+wechat-cli unread                          # Group by chat type and mute
+wechat-cli unread --format text            # Sections: 普通聊天 · 正常提醒, 公众号 · 免打扰, …
+wechat-cli unread --group-by none          # Flat list (previous shape)
 wechat-cli unread --limit 10 --format text
 ```
 

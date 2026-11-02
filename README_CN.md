@@ -307,7 +307,9 @@ python scripts/decrypt_db.py favorite/favorite.db -o favorite_plain.db
 ### `unread` — 未读会话
 
 ```bash
-wechat-cli unread                          # 所有未读会话
+wechat-cli unread                          # 按会话类型和免打扰分组
+wechat-cli unread --format text            # 分段：普通聊天 · 正常提醒、公众号 · 免打扰 …
+wechat-cli unread --group-by none          # 平铺列表（旧输出）
 wechat-cli unread --limit 10 --format text
 ```
 

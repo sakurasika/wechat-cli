@@ -25,6 +25,56 @@ def _load_contacts_from(db_path):
     return names, full
 
 
+def _contact_db_path(cache, decrypted_dir):
+    pre_decrypted = os.path.join(decrypted_dir or "", "contact", "contact.db")
+    if pre_decrypted and os.path.exists(pre_decrypted):
+        return pre_decrypted
+    if cache is None:
+        return None
+    return cache.get(os.path.join("contact", "contact.db"))
+
+
+_CLASS_COLUMNS = ("verify_flag", "local_type", "flag", "chat_room_notify")
+
+
+def get_contact_class_rows(cache, decrypted_dir, usernames):
+    """批量读取未读分类要用的 contact 列。
+
+    缺表、缺列或解密失败时返回能拿到的字段；调用方用 username 规则兜底。
+    """
+    wanted = [name for name in usernames if name]
+    if not wanted:
+        return {}
+    db_path = _contact_db_path(cache, decrypted_dir)
+    if not db_path:
+        return {}
+
+    conn = sqlite3.connect(db_path)
+    try:
+        available = {row[1] for row in conn.execute("PRAGMA table_info(contact)")}
+        if "username" not in available:
+            return {}
+        cols = [col for col in _CLASS_COLUMNS if col in available]
+        placeholders = ",".join("?" * len(wanted))
+        select = "username" + (", " + ", ".join(cols) if cols else "")
+        rows = conn.execute(
+            f"SELECT {select} FROM contact WHERE username IN ({placeholders})",
+            wanted,
+        ).fetchall()
+    except sqlite3.Error:
+        return {}
+    finally:
+        conn.close()
+
+    out = {}
+    for row in rows:
+        record = {}
+        for index, col in enumerate(cols, start=1):
+            record[col] = row[index]
+        out[row[0]] = record
+    return out
+
+
 def get_contact_names(cache, decrypted_dir):
     global _contact_names, _contact_full
     if _contact_names is not None:
@@ -98,12 +148,7 @@ def get_group_members(chatroom_username, cache, decrypted_dir):
         dict: {'members': [...], 'owner': str}
         每个 member: {'username': ..., 'nick_name': ..., 'remark': ..., 'display_name': ...}
     """
-    pre_decrypted = os.path.join(decrypted_dir, "contact", "contact.db")
-    if os.path.exists(pre_decrypted):
-        db_path = pre_decrypted
-    else:
-        db_path = cache.get(os.path.join("contact", "contact.db"))
-
+    db_path = _contact_db_path(cache, decrypted_dir)
     if not db_path:
         return {'members': [], 'owner': ''}
 
@@ -158,11 +203,7 @@ def get_contact_detail(username, cache, decrypted_dir):
     Returns:
         dict or None: 联系人详细信息
     """
-    pre_decrypted = os.path.join(decrypted_dir, "contact", "contact.db")
-    if os.path.exists(pre_decrypted):
-        db_path = pre_decrypted
-    else:
-        db_path = cache.get(os.path.join("contact", "contact.db"))
+    db_path = _contact_db_path(cache, decrypted_dir)
     if not db_path:
         return None
 
