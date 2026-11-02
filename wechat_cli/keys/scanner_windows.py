@@ -13,9 +13,12 @@ import subprocess
 import time
 
 from .common import (
-    KEY_SZ,
+    CONFIG_BLOB_MAX,
+    CONFIG_CIPHER_NAME,
     collect_db_files,
+    config_cipher_key_candidates,
     cross_verify_keys,
+    probable_32_byte_key,
     save_results,
     scan_memory_for_keys,
     verify_enc_key,
@@ -27,15 +30,7 @@ kernel32 = ctypes.windll.kernel32
 MEM_COMMIT = 0x1000
 READABLE = {0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80}
 
-CONFIG_CIPHER_NAME = b"com.Tencent.WCDB.Config.Cipher"
-# Config.Cipher blob 在内存中经固定掩码 XOR 后可还原出 x'<key><salt>' 字面量
-CONFIG_XOR_MASK = bytes.fromhex(
-    "d2c7442458020000004889442450488b"
-    "450048844c2448488944254048584c24"
-)
 MAX_USER_ADDRESS = 0x0000_8000_0000_0000
-CONFIG_BLOB_MAX = 1024
-CONFIG_LITERAL_RE = re.compile(rb"[xX]'([0-9a-fA-F]{64,192})'")
 
 
 class MBI(ctypes.Structure):
@@ -96,22 +91,10 @@ def _enum_regions(h):
     return regs
 
 
-def _xor_repeat(data, mask):
-    return bytes(value ^ mask[index % len(mask)] for index, value in enumerate(data))
-
-
 def _u64_from(data, offset):
     if offset < 0 or offset + 8 > len(data):
         return 0
     return struct.unpack_from("<Q", data, offset)[0]
-
-
-def _probable_32_byte_key(data):
-    return (
-        len(data) == KEY_SZ
-        and len(set(data)) >= 15
-        and data not in {b"\x00" * KEY_SZ, b"\xff" * KEY_SZ}
-    )
 
 
 def _iter_region_chunks(regions, read_region, chunk_size=2 * 1024 * 1024, overlap=0):
@@ -150,39 +133,6 @@ def _find_bytes_in_regions(regions, read_region, needle):
     return addresses
 
 
-def _config_key_candidates(blob):
-    """从 Config.Cipher blob 中解码出候选 enc_key / salt。"""
-    if not blob or len(blob) > CONFIG_BLOB_MAX:
-        return []
-    decoded = _xor_repeat(blob, CONFIG_XOR_MASK)
-    out = []
-    seen = set()
-    for match in CONFIG_LITERAL_RE.finditer(decoded):
-        run = match.group(1).decode("ascii").lower()
-        starts = [0]
-        if len(run) > 96:
-            starts.extend(range(0, len(run) - 63, 32))
-            starts.append(len(run) - 64)
-        for start in dict.fromkeys(starts):
-            if start < 0 or start + 64 > len(run):
-                continue
-            enc_key_hex = run[start:start + 64]
-            try:
-                enc_key = bytes.fromhex(enc_key_hex)
-            except ValueError:
-                continue
-            if not _probable_32_byte_key(enc_key):
-                continue
-            embedded_salt = None
-            if start + 96 <= len(run):
-                embedded_salt = run[start + 64:start + 96]
-            item = (enc_key_hex, embedded_salt)
-            if item not in seen:
-                seen.add(item)
-                out.append(item)
-    return out
-
-
 def _verify_direct_key_candidate(
     enc_key_hex, embedded_salt, db_files, salt_to_dbs, key_map, remaining_salts
 ):
@@ -192,7 +142,7 @@ def _verify_direct_key_candidate(
         enc_key = bytes.fromhex(enc_key_hex)
     except ValueError:
         return 0
-    if not _probable_32_byte_key(enc_key):
+    if not probable_32_byte_key(enc_key):
         return 0
     matched = 0
     target_salts = (
@@ -272,7 +222,7 @@ def _scan_config_cipher(
                     pos = data.find(pattern, pos + 1)
                     continue
 
-                for enc_key_hex, embedded_salt in _config_key_candidates(blob):
+                for enc_key_hex, embedded_salt in config_cipher_key_candidates(blob):
                     candidate = (enc_key_hex, embedded_salt)
                     if candidate in seen_candidates:
                         continue

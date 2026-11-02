@@ -2,6 +2,7 @@
 跨平台共享的内存扫描逻辑：HMAC 验证、DB 收集、hex 模式匹配与结果输出。
 
 从 wechat-decrypt/key_scan_common.py 适配，save_results 改为返回 dict。
+Config.Cipher 的 XOR 掩码与 x'<hex>' 解码是 Windows / Linux 4.1+ 共用的。
 """
 
 import hashlib
@@ -57,6 +58,117 @@ def derive_keys_from_passphrase(passphrase, db_files, salt_to_dbs, print_fn=None
         if print_fn and ((i + 1) % 5 == 0 or i == total - 1):
             print_fn(f"  PBKDF2 派生: {i + 1}/{total} ({len(key_map)} 验证通过)")
     return key_map
+
+
+# 微信 4.1+ 把密钥材料放在 WCDB Config.Cipher 对象里，并用这段 32 字节掩码 XOR。
+# Linux 4.1.13.26 的 .rodata 与 Windows 扫描用的是同一组字节；循环周期是 32
+# （二进制里按 index & 0x1f 取掩码）。
+CONFIG_CIPHER_NAME = b"com.Tencent.WCDB.Config.Cipher"
+CONFIG_XOR_MASK = bytes.fromhex(
+    "d2c7442458020000004889442450488b"
+    "450048844c2448488944254048584c24"
+)
+CONFIG_BLOB_MAX = 1024
+CONFIG_LITERAL_RE = re.compile(rb"[xX]'([0-9a-fA-F]{64,192})'")
+_HEX_ASCII = b"0123456789abcdefABCDEF"
+
+
+def xor_repeat(data, mask=None):
+    """用循环掩码 XOR。默认掩码即 Config.Cipher 的 32 字节常量。"""
+    if mask is None:
+        mask = CONFIG_XOR_MASK
+    if not mask:
+        return b""
+    return bytes(value ^ mask[index % len(mask)] for index, value in enumerate(data))
+
+
+def probable_32_byte_key(data):
+    """粗过滤明显不是密钥的 32 字节（全 0 / 全 FF / 熵太低）。"""
+    return (
+        len(data) == KEY_SZ
+        and len(set(data)) >= 15
+        and data not in {b"\x00" * KEY_SZ, b"\xff" * KEY_SZ}
+    )
+
+
+def decode_config_cipher_blob(blob):
+    """XOR 还原 Config.Cipher 里的密钥材料。过长或空 blob 返回空。"""
+    if not blob or len(blob) > CONFIG_BLOB_MAX:
+        return b""
+    return xor_repeat(blob, CONFIG_XOR_MASK)
+
+
+def config_cipher_key_candidates(blob):
+    """从 Config.Cipher blob 解码出候选 (enc_key_hex, embedded_salt_or_None)。
+
+    embedded_salt 是字面量里紧跟 32 字节 key 的 16 字节 salt（hex），没有则为 None。
+    """
+    decoded = decode_config_cipher_blob(blob)
+    if not decoded:
+        return []
+    out = []
+    seen = set()
+    for match in CONFIG_LITERAL_RE.finditer(decoded):
+        run = match.group(1).decode("ascii").lower()
+        starts = [0]
+        if len(run) > 96:
+            starts.extend(range(0, len(run) - 63, 32))
+            starts.append(len(run) - 64)
+        for start in dict.fromkeys(starts):
+            if start < 0 or start + 64 > len(run):
+                continue
+            enc_key_hex = run[start:start + 64]
+            try:
+                enc_key = bytes.fromhex(enc_key_hex)
+            except ValueError:
+                continue
+            if not probable_32_byte_key(enc_key):
+                continue
+            embedded_salt = None
+            if start + 96 <= len(run):
+                embedded_salt = run[start + 64:start + 96]
+            item = (enc_key_hex, embedded_salt)
+            if item not in seen:
+                seen.add(item)
+                out.append(item)
+    return out
+
+
+def passphrase_candidates(decoded):
+    """从已解码的 Config.Cipher 材料里收集 32 字节 passphrase。
+
+    Linux 4.1+ 常直接存 passphrase，而不是 x'<enc_key><salt>'。
+    只接受：整段就是 32 字节（尾部可有少量 NUL）、64 位 hex，或 x'<64hex>'。
+    """
+    if not decoded:
+        return []
+    found = []
+    seen = set()
+
+    def add(raw):
+        if probable_32_byte_key(raw) and raw not in seen:
+            seen.add(raw)
+            found.append(raw)
+
+    if KEY_SZ <= len(decoded) <= KEY_SZ + 8 and decoded[KEY_SZ:].strip(b"\x00") == b"":
+        add(decoded[:KEY_SZ])
+
+    stripped = decoded.strip(b"\x00 \r\n\t")
+    if len(stripped) == 64 and all(byte in _HEX_ASCII for byte in stripped):
+        try:
+            add(bytes.fromhex(stripped.decode("ascii")))
+        except ValueError:
+            pass
+
+    for match in CONFIG_LITERAL_RE.finditer(decoded):
+        run = match.group(1)
+        if len(run) != 64:
+            continue
+        try:
+            add(bytes.fromhex(run.decode("ascii")))
+        except ValueError:
+            continue
+    return found
 
 
 def collect_db_files(db_dir):

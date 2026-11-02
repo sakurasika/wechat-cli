@@ -345,9 +345,9 @@ wechat-cli new-messages                    # 后续: 仅返回上次以来的新
 
 - **macOS** ≥ 26.3.1（Mac 版密钥提取仍依赖内存扫描 / 重签名）
 - **Windows**：微信 4.0.x ~ 4.1.x（含 4.1.11+ / 4.1.15）。`init` 优先走 `Config.Cipher` 运行时扫描，失败再回退老版本 `x'<hex>'` 内存扫描
-- **Linux**：微信 4.0.x 内存扫描可用；4.1+ 需额外的调试器捕获方案（规划中）
+- **Linux**：微信 4.0.x ~ 4.1.x（含 4.1.13）。`init` 优先走 `Config.Cipher` 运行时扫描：XOR 解码后，`x'<hex>'` 直接校验，32 字节材料按 passphrase 做 PBKDF2；都未命中再回退老版本 `x'<hex>'` 内存扫描。需要 root 或 `CAP_SYS_PTRACE`
 
-> Mac / Linux 上更新的微信版本若已不再缓存明文密钥，可能需要后续接入 passphrase + PBKDF2 方案。
+> Mac 上更新的微信版本若已不再缓存明文密钥，可能需要后续接入 passphrase + PBKDF2 方案。Linux 4.1+ 会从内存里的 `Config.Cipher` 对象读取该 passphrase。
 
 ---
 
@@ -358,7 +358,7 @@ wechat-cli new-messages                    # 后续: 仅返回上次以来的新
 | macOS (Apple Silicon) | ✅ 支持 | 内置 arm64 二进制 |
 | macOS (Intel) | ✅ 支持 | 需要 x86_64 二进制 |
 | Windows | ✅ 支持 | 读取 Weixin.exe 进程内存 |
-| Linux | ✅ 支持 | 读取 /proc/pid/mem，需要 root |
+| Linux | ✅ 支持 | 读取 /proc/pid/mem（需要 root）。4.1+ 走 Config.Cipher，再回退 hex 扫描 |
 
 ---
 
@@ -395,7 +395,7 @@ wechat-cli new-messages                    # 后续: 仅返回上次以来的新
 
 - [freestylefly/wechat-cli](https://github.com/freestylefly/wechat-cli) — 原版微信 CLI（查询聊天记录、联系人、会话等）
 - [ylytdeng/wechat-decrypt](https://github.com/ylytdeng/wechat-decrypt) — 微信数据库解密与数据解析基础能力
-- [TANGandXUE/wcdb-key-tool](https://github.com/TANGandXUE/wcdb-key-tool) — 微信 4.1+ 密钥提取（`Config.Cipher` 运行时扫描 / PBKDF2 passphrase 派生），用于更新 Windows 端 `init` 以适配新版微信
+- [TANGandXUE/wcdb-key-tool](https://github.com/TANGandXUE/wcdb-key-tool) — 微信 4.1+ 密钥提取（`Config.Cipher` 运行时扫描 / PBKDF2 passphrase 派生），用于 Windows 与 Linux 端 `init`
 
 ---
 

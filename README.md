@@ -347,9 +347,9 @@ The `--type` option (on `history` and `search`):
 
 - **macOS** ≥ 26.3.1 (Mac key extraction still relies on memory scan / re-signing)
 - **Windows**: WeChat 4.0.x ~ 4.1.x (including 4.1.11+ / 4.1.15). `init` prefers a read-only `Config.Cipher` runtime scan, then falls back to legacy `x'<hex>'` memory scanning
-- **Linux**: WeChat 4.0.x memory scan works; 4.1+ needs a debugger-based capture path (planned)
+- **Linux**: WeChat 4.0.x ~ 4.1.x (including 4.1.13). `init` prefers a read-only `Config.Cipher` runtime scan — XOR-decode the blob, verify an `x'<hex>'` key directly, or PBKDF2 a 32-byte passphrase — then falls back to legacy `x'<hex>'` memory scanning. Requires root or `CAP_SYS_PTRACE`
 
-> On Mac/Linux, newer WeChat builds that no longer cache raw keys may need the passphrase + PBKDF2 path in a follow-up.
+> On Mac, newer WeChat builds that no longer cache raw keys may need the passphrase + PBKDF2 path in a follow-up. Linux 4.1+ reads that passphrase from the in-memory `Config.Cipher` object.
 
 ---
 
@@ -360,7 +360,7 @@ The `--type` option (on `history` and `search`):
 | macOS (Apple Silicon) | ✅ Supported | Bundled arm64 binary |
 | macOS (Intel) | ✅ Supported | x86_64 binary needed |
 | Windows | ✅ Supported | Reads Weixin.exe process memory |
-| Linux | ✅ Supported | Reads /proc/pid/mem, requires root |
+| Linux | ✅ Supported | Reads /proc/pid/mem (root). 4.1+ uses Config.Cipher, then the legacy hex scan |
 
 ---
 
@@ -397,7 +397,7 @@ This project is based on / forked from the following open-source work:
 
 - [freestylefly/wechat-cli](https://github.com/freestylefly/wechat-cli) — the original WeChat CLI (query chat history, contacts, sessions, etc.)
 - [ylytdeng/wechat-decrypt](https://github.com/ylytdeng/wechat-decrypt) — WeChat database decryption and data parsing foundations
-- [TANGandXUE/wcdb-key-tool](https://github.com/TANGandXUE/wcdb-key-tool) — WeChat 4.1+ key extraction (`Config.Cipher` runtime scan / PBKDF2 passphrase derivation), used to update Windows `init` for newer WeChat versions
+- [TANGandXUE/wcdb-key-tool](https://github.com/TANGandXUE/wcdb-key-tool) — WeChat 4.1+ key extraction (`Config.Cipher` runtime scan / PBKDF2 passphrase derivation), used for Windows and Linux `init`
 
 ---
 
